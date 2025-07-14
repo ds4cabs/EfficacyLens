@@ -1,0 +1,315 @@
+{
+  "name": "临床试验数据收集器",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1"
+            }
+          ]
+        }
+      },
+      "name": "每周一收集数据",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "requestMethod": "GET",
+        "url": "https://clinicaltrials.gov/api/query/study_fields",
+        "options": {},
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "expr",
+              "value": "AREA[StudyType]EXACT[\"Interventional\"] AND AREA[Phase]PHASE3"
+            },
+            {
+              "name": "fields",
+              "value": "NCTId,BriefTitle,Condition,InterventionName,PrimaryOutcomeMeasure,StudyFirstPostDate,CompletionDate,EnrollmentCount"
+            },
+            {
+              "name": "min_rnk",
+              "value": "1"
+            },
+            {
+              "name": "max_rnk",
+              "value": "20"
+            },
+            {
+              "name": "fmt",
+              "value": "json"
+            }
+          ]
+        }
+      },
+      "name": "获取临床试验数据",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// 处理和清理临床试验数据\nconst items = $input.all();\nconst processedData = [];\n\nfor (const item of items) {\n  const studies = item.json.StudyFieldsResponse?.StudyFields || [];\n  \n  for (const study of studies) {\n    // 提取关键信息\n    const processedStudy = {\n      nctId: study.NCTId?.[0] || '',\n      title: study.BriefTitle?.[0] || '',\n      condition: study.Condition?.join('; ') || '',\n      intervention: study.InterventionName?.join('; ') || '',\n      primaryOutcome: study.PrimaryOutcomeMeasure?.[0] || '',\n      startDate: study.StudyFirstPostDate?.[0] || '',\n      completionDate: study.CompletionDate?.[0] || '',\n      enrollmentCount: parseInt(study.EnrollmentCount?.[0]) || 0,\n      collectedAt: new Date().toISOString(),\n      // 添加数据质量标记\n      dataQuality: {\n        hasOutcome: !!study.PrimaryOutcomeMeasure?.[0],\n        hasEnrollment: !!study.EnrollmentCount?.[0],\n        isComplete: !!(study.CompletionDate?.[0])\n      }\n    };\n    \n    // 只保留有主要终点的研究\n    if (processedStudy.dataQuality.hasOutcome) {\n      processedData.push({ json: processedStudy });\n    }\n  }\n}\n\nreturn processedData;"
+      },
+      "name": "数据清理和处理",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.enrollmentCount}}",
+              "operation": "larger",
+              "value2": 100
+            }
+          ]
+        }
+      },
+      "name": "筛选大样本研究",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "your-google-sheet-id",
+        "sheetName": "临床试验数据",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "values": {
+            "NCT ID": "={{$json.nctId}}",
+            "研究标题": "={{$json.title}}",
+            "疾病条件": "={{$json.condition}}",
+            "干预措施": "={{$json.intervention}}",
+            "主要终点": "={{$json.primaryOutcome}}",
+            "开始日期": "={{$json.startDate}}",
+            "完成日期": "={{$json.completionDate}}",
+            "入组人数": "={{$json.enrollmentCount}}",
+            "收集时间": "={{$json.collectedAt}}"
+          }
+        },
+        "options": {}
+      },
+      "name": "保存到Google表格",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 3,
+      "position": [1140, 300]
+    },
+    {
+      "parameters": {
+        "requestMethod": "GET",
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+        "options": {},
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "db",
+              "value": "pubmed"
+            },
+            {
+              "name": "term",
+              "value": "clinical trial[ptyp] AND \"last 7 days\"[PDat] AND (cancer OR oncology)"
+            },
+            {
+              "name": "retmode",
+              "value": "json"
+            },
+            {
+              "name": "retmax",
+              "value": "10"
+            }
+          ]
+        }
+      },
+      "name": "获取PubMed新论文",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [480, 500]
+    },
+    {
+      "parameters": {
+        "functionCode": "// 获取论文详细信息\nconst items = $input.all();\nconst pmids = [];\n\nfor (const item of items) {\n  const idList = item.json.esearchresult?.idlist || [];\n  pmids.push(...idList);\n}\n\nif (pmids.length === 0) {\n  return [{ json: { message: '没有找到新论文' } }];\n}\n\n// 返回PMID列表用于下一步获取详细信息\nreturn pmids.map(pmid => ({ json: { pmid } }));"
+      },
+      "name": "提取论文ID",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 500]
+    },
+    {
+      "parameters": {
+        "requestMethod": "GET",
+        "url": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+        "options": {},
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "db",
+              "value": "pubmed"
+            },
+            {
+              "name": "id",
+              "value": "={{$json.pmid}}"
+            },
+            {
+              "name": "retmode",
+              "value": "xml"
+            }
+          ]
+        }
+      },
+      "name": "获取论文详情",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [920, 500]
+    },
+    {
+      "parameters": {
+        "toEmail": "your-email@example.com",
+        "subject": "EfficacyLens - 每周数据收集报告",
+        "emailFormat": "html",
+        "message": "=<h2>📊 本周临床试验数据收集报告</h2>\n\n<h3>🔬 新收集的试验数据:</h3>\n<ul>\n{{#each $json}}\n<li><strong>{{this.title}}</strong> ({{this.nctId}})<br>\n   条件: {{this.condition}}<br>\n   入组: {{this.enrollmentCount}} 人</li>\n{{/each}}\n</ul>\n\n<h3>📚 新发表论文:</h3>\n<p>发现 {{$json.length}} 篇相关论文</p>\n\n<h3>🎯 下一步行动:</h3>\n<ol>\n<li>审查收集的数据质量</li>\n<li>更新解析pipeline</li>\n<li>开始数据分析</li>\n</ol>\n\n<hr>\n<p><em>自动生成于: {{new Date().toLocaleString()}}</em></p>"
+      },
+      "name": "发送报告邮件",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 1,
+      "position": [1360, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.message}}",
+              "operation": "notContains",
+              "value2": "没有找到"
+            }
+          ]
+        }
+      },
+      "name": "检查是否有新数据",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1140, 500]
+    }
+  ],
+  "connections": {
+    "每周一收集数据": {
+      "main": [
+        [
+          {
+            "node": "获取临床试验数据",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "获取PubMed新论文",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取临床试验数据": {
+      "main": [
+        [
+          {
+            "node": "数据清理和处理",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "数据清理和处理": {
+      "main": [
+        [
+          {
+            "node": "筛选大样本研究",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "筛选大样本研究": {
+      "main": [
+        [
+          {
+            "node": "保存到Google表格",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "保存到Google表格": {
+      "main": [
+        [
+          {
+            "node": "发送报告邮件",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取PubMed新论文": {
+      "main": [
+        [
+          {
+            "node": "提取论文ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "提取论文ID": {
+      "main": [
+        [
+          {
+            "node": "获取论文详情",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取论文详情": {
+      "main": [
+        [
+          {
+            "node": "检查是否有新数据",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "检查是否有新数据": {
+      "main": [
+        [
+          {
+            "node": "发送报告邮件",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {},
+  "id": "clinical-trials-collector"
+} 
