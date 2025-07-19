@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""
+Example usage of EfficacyLens AI Agent for comparing pharmaceutical publications.
+
+This script demonstrates how to use the EfficacyLens agent to compare 
+two clinical trial publications and generate insights for decision makers.
+"""
+
+import os
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Add src directory to path for imports
+sys.path.append('src')
+
+from src.efficacy_lens_agent import EfficacyLensAgent
+
+def main():
+    """
+    Example usage of the EfficacyLens AI Agent.
+    """
+    
+    # Load environment variables
+    load_dotenv()
+    
+    # Get API key
+    api_key = os.getenv('GOOGLE_API_KEY')
+    if not api_key:
+        print("❌ Error: GOOGLE_API_KEY not found in environment variables.")
+        print("Please set your Gemini API key:")
+        print("export GOOGLE_API_KEY='your_api_key_here'")
+        return
+    
+    print("🔬 EfficacyLens: Clinical Trial Comparison AI Agent")
+    print("=" * 50)
+    
+    # Example with sample data
+    sample_comparisons = [
+        {
+            "name": "Breast Cancer Studies",
+            "pdf1": "20 publications/BreastCancer1.pdf",
+            "pdf2": "20 publications/BreastCancer2.pdf"
+        },
+        {
+            "name": "NSCLC Studies", 
+            "pdf1": "20 publications/NSCLC_1.pdf",
+            "pdf2": "20 publications/NSCLC_2.pdf"
+        },
+        {
+            "name": "Migraine Studies",
+            "pdf1": "20 publications/Migraine1.pdf", 
+            "pdf2": "20 publications/Migraine2.pdf"
+        }
+    ]
+    
+    print("\nAvailable sample comparisons:")
+    for i, comparison in enumerate(sample_comparisons, 1):
+        print(f"{i}. {comparison['name']}")
+    
+    print("\nSelect a comparison (1-3) or press Enter to use Breast Cancer studies:")
+    choice = input().strip()
+    
+    if choice == "":
+        choice = "1"
+    
+    try:
+        selected = sample_comparisons[int(choice) - 1]
+    except (ValueError, IndexError):
+        print("Invalid choice, using Breast Cancer studies.")
+        selected = sample_comparisons[0]
+    
+    pdf1_path = selected["pdf1"]
+    pdf2_path = selected["pdf2"]
+    
+    # Check if files exist
+    if not (Path(pdf1_path).exists() and Path(pdf2_path).exists()):
+        print(f"❌ Error: Sample files not found.")
+        print(f"Expected: {pdf1_path} and {pdf2_path}")
+        print("Please ensure the '20 publications' directory contains the sample PDFs.")
+        return
+    
+    print(f"\n🔍 Analyzing: {selected['name']}")
+    print(f"📄 Publication 1: {Path(pdf1_path).name}")
+    print(f"📄 Publication 2: {Path(pdf2_path).name}")
+    print("\n🤖 Starting AI analysis... This may take a few minutes.")
+    
+    try:
+        # Initialize the AI agent
+        agent = EfficacyLensAgent(api_key=api_key, model_name="gemini-2.0-flash")
+        
+        # Perform comparison
+        results = agent.compare_publications(pdf1_path, pdf2_path)
+        
+        # Display results
+        print("\n" + "=" * 80)
+        print("📊 COMPARISON RESULTS")
+        print("=" * 80)
+        
+        print("\n📋 DETAILED COMPARISON TABLE")
+        print("-" * 40)
+        print(results["comparison_table"])
+        
+        print("\n💡 EXECUTIVE SUMMARY")
+        print("-" * 40)
+        
+        print("\n🎯 Investment Opportunity:")
+        print(results.get("investment_opportunity", results.get("efficacy_analysis", "Analysis not available")))
+        
+        print("\n⚠️ Risk Assessment & Strategy:")
+        print(results.get("risk_assessment_and_strategy", results.get("safety_recommendations", "Analysis not available")))
+        
+        # Save results to file
+        output_file = f"comparison_results_{Path(pdf1_path).stem}_{Path(pdf2_path).stem}.md"
+        agent.save_results(results, output_file)
+        print(f"\n💾 Results saved to: {output_file}")
+        
+        print("\n✅ Analysis completed successfully!")
+        
+    except Exception as e:
+        print(f"\n❌ Error during analysis: {str(e)}")
+        print("Please check your API key and internet connection.")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main() 
