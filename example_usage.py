@@ -39,18 +39,18 @@ def main():
     sample_comparisons = [
         {
             "name": "Breast Cancer Studies",
-            "pdf1": "20 publications/BreastCancer1.pdf",
-            "pdf2": "20 publications/BreastCancer2.pdf"
+            "pdf1": "example publications/BreastCancer1.pdf",
+            "pdf2": "example publications/BreastCancer2.pdf"
         },
         {
             "name": "NSCLC Studies", 
-            "pdf1": "20 publications/NSCLC_1.pdf",
-            "pdf2": "20 publications/NSCLC_2.pdf"
+            "pdf1": "example publications/NSCLC_1.pdf",
+            "pdf2": "example publications/NSCLC_2.pdf"
         },
         {
             "name": "Migraine Studies",
-            "pdf1": "20 publications/Migraine1.pdf", 
-            "pdf2": "20 publications/Migraine2.pdf"
+            "pdf1": "example publications/Migraine1.pdf", 
+            "pdf2": "example publications/Migraine2.pdf"
         }
     ]
     
@@ -77,7 +77,7 @@ def main():
     if not (Path(pdf1_path).exists() and Path(pdf2_path).exists()):
         print(f"❌ Error: Sample files not found.")
         print(f"Expected: {pdf1_path} and {pdf2_path}")
-        print("Please ensure the '20 publications' directory contains the sample PDFs.")
+        print("Please ensure the 'example publications' directory contains the sample PDFs.")
         return
     
     print(f"\n🔍 Analyzing: {selected['name']}")
@@ -89,7 +89,9 @@ def main():
         # Initialize the AI agent
         agent = EfficacyLensAgent(api_key=api_key, model_name="gemini-2.0-flash")
         
-        # Perform comparison
+        print("\n🔍 Validating publication compatibility...")
+        
+        # Perform comparison (includes validation)
         results = agent.compare_publications(pdf1_path, pdf2_path)
         
         # Display results
@@ -117,6 +119,24 @@ def main():
         
         print("\n✅ Analysis completed successfully!")
         
+    except ValueError as e:
+        if "Comparative Analysis Not Possible" in str(e):
+            print(f"\n🚫 {str(e)}")
+            print("\n" + "="*60)
+            print("❌ THESE PUBLICATIONS CANNOT BE COMPARED")
+            print("="*60)
+            print("Cross-disease comparisons produce scientifically invalid results.")
+            print("Each disease has unique biology that prevents meaningful comparison.")
+            print("\n💡 NEXT STEPS:")
+            print("✅ Select publications studying the same disease or therapeutic indication")
+            print("✅ Use our validated sample pairs for testing:")
+            print("   - Breast Cancer: BreastCancer1.pdf + BreastCancer2.pdf")
+            print("   - Melanoma: Melanoma1.pdf + melanoma2.pdf") 
+            print("   - Lung Cancer: NSCLC_1.pdf + NSCLC_2.pdf")
+            print("   - Migraine: Migraine1.pdf + Migraine2.pdf")
+            print("\n🔬 EfficacyLens maintains scientific integrity by preventing invalid comparisons.")
+        else:
+            print(f"\n❌ Validation error: {str(e)}")
     except Exception as e:
         print(f"\n❌ Error during analysis: {str(e)}")
         print("Please check your API key and internet connection.")

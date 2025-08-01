@@ -86,6 +86,8 @@ def main():
             st.stop()
     
     # Main interface
+    st.warning("🔬 **Critical Requirement:** Both publications must study the same disease or therapeutic indication for scientifically valid comparison. Cross-disease comparisons are not supported as they produce clinically meaningless results.")
+    
     col1, col2 = st.columns(2)
     
     with col1:
@@ -120,7 +122,7 @@ def main():
         
         if st.button("🔍 Analyze Publications", type="primary", use_container_width=True):
             
-            with st.spinner("🤖 AI is analyzing the publications... This may take a few minutes."):
+            with st.spinner("🤖 AI is validating and analyzing the publications... This may take a few minutes."):
                 try:
                     # Save uploaded files temporarily
                     with tempfile.TemporaryDirectory() as temp_dir:
@@ -142,9 +144,40 @@ def main():
                         # Display results
                         display_results(results, pdf1.name, pdf2.name)
                         
+                except ValueError as e:
+                    # Handle validation errors specifically
+                    if "Comparative Analysis Not Possible" in str(e):
+                        st.error("🚫 **Publications Not Comparable**")
+                        
+                        # Display the error in a more user-friendly way
+                        error_lines = str(e).split('\n')
+                        for line in error_lines:
+                            line = line.strip()
+                            if line:
+                                if "Publication 1:" in line or "Publication 2:" in line:
+                                    st.info(line)
+                                elif "Why This Matters:" in line:
+                                    st.markdown("**Why This Matters:**")
+                                elif "To Proceed:" in line:
+                                    st.markdown("**To Proceed:**")
+                                elif "Validated Sample Pairs Available:" in line:
+                                    st.markdown("**Validated Sample Pairs Available:**")
+                                elif line.startswith("- "):
+                                    st.markdown(line)
+                                elif "Cross-disease comparisons" in line:
+                                    st.markdown(f"*{line}*")
+                        
+                        # Encourage using compatible publications
+                        st.markdown("---")
+                        st.success("💡 **Next Step:** Please upload publications that study the same disease or use our validated sample pairs above.")
+                        
+                    else:
+                        st.error(f"❌ Validation error: {str(e)}")
                 except Exception as e:
                     st.error(f"❌ Error during analysis: {str(e)}")
-                    st.exception(e)
+                    if "API key" in str(e).lower():
+                        st.info("💡 Please check your Gemini API key in the sidebar.")
+                    # st.exception(e)  # Comment out to reduce clutter in UI
     
     # Sample data section
     with st.expander("📚 Use Sample Data", expanded=False):
@@ -166,8 +199,8 @@ def main():
         
         if st.button("🔍 Analyze Sample Publications", key="sample_analysis"):
             pdf1_name, pdf2_name = sample_options[selected_sample]
-            pdf1_path = f"20 publications/{pdf1_name}"
-            pdf2_path = f"20 publications/{pdf2_name}"
+            pdf1_path = f"example publications/{pdf1_name}"
+            pdf2_path = f"example publications/{pdf2_name}"
             
             if os.path.exists(pdf1_path) and os.path.exists(pdf2_path):
                 with st.spinner("🤖 AI is analyzing the sample publications..."):

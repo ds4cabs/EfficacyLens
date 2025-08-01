@@ -23,20 +23,31 @@ EfficacyLens is an AI-powered system that enables researchers to upload two comp
 
 ```
 EfficacyLens/
-├── src/                          # Source code
+├── src/                          # Core AI engine
 │   ├── __init__.py              # Package initialization
-│   ├── efficacy_lens_agent.py   # Main AI agent class
-│   ├── pdf_processor.py         # PDF text extraction
-│   └── streamlit_app.py         # Web interface
-├── 20 publications/             # Sample pharmaceutical publications
+│   ├── efficacy_lens_agent.py   # Main AI agent with two-step validation
+│   ├── pdf_processor.py         # PDF text extraction using PyPDF2
+│   └── streamlit_app.py         # Web interface with mandatory validation
+├── example publications/        # Real pharmaceutical publications (4 therapeutic areas)
+│   ├── BreastCancer1.pdf        # Sample breast cancer studies
+│   ├── BreastCancer2.pdf
+│   ├── Melanoma1.pdf            # Sample melanoma studies  
+│   ├── melanoma2.pdf
+│   ├── NSCLC_1.pdf              # Sample lung cancer studies
+│   ├── NSCLC_2.pdf
+│   ├── Migraine1.pdf            # Sample migraine studies
+│   └── Migraine2.pdf
 ├── models/                      # AI prompts and configurations
-├── validation/                  # Expert summaries and QA
-├── requirements.txt             # Python dependencies
-├── example_usage.py             # Command-line demo script
+├── validation/                  # Validation data and QA
+├── venv/                        # Virtual environment
+├── requirements.txt             # Python dependencies (Google Gemini API, Streamlit, etc.)
+├── example_usage.py             # Command-line interface
+├── demo.py                      # Demo script (no API key required)
 ├── env.example                  # Environment variables template
 ├── .env                         # Your private API key (git-ignored)
-├── .gitignore                   # Excludes sensitive files
-└── README.md                    # This file
+├── .gitignore                   # Excludes sensitive files and API keys
+├── comparison_results_*.md      # Generated analysis reports
+└── README.md                    # Complete documentation
 ```
 
 ## ⚡ Quick Start

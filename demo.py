@@ -15,6 +15,8 @@ def mock_agent_demo():
     """
     print("🔬 EfficacyLens: Clinical Trial Comparison AI Agent - DEMO")
     print("=" * 60)
+    print("Note: EfficacyLens only compares publications studying the same disease.")
+    print("Cross-disease comparisons are scientifically invalid and not supported.")
     print()
     
     # Mock comparison data that would come from Gemini API
