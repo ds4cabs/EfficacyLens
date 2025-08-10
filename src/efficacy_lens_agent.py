@@ -1,7 +1,7 @@
 import os
 import logging
 from typing import Dict, List, Tuple, Optional
-from google import genai
+import google.genai as genai
 import pandas as pd
 from tabulate import tabulate
 import json
@@ -13,7 +13,7 @@ class EfficacyLensAgent:
     
     Takes two comparable pharmaceutical publication PDFs as input and generates:
     1. A comparison table with key results
-    2. Two paragraphs of analysis for decision makers
+    2. Two paragraphs of analysis for decision makers like Investment Managers, Head of R&D, Market Access Directors, and Chief Medical Officers (CMOs).
     """
     
     def __init__(self, api_key: str, model_name: str = "gemini-1.5-pro"):
@@ -59,9 +59,51 @@ class EfficacyLensAgent:
             self.logger.error(f"Error extracting PDF text: {str(e)}")
             raise
     
+    def generate_validation_prompt(self, text1: str, text2: str) -> str:
+        """
+        Generate a prompt for disease validation only.
+        
+        Args:
+            text1: Text content from first publication
+            text2: Text content from second publication
+            
+        Returns:
+            Formatted validation prompt for Gemini API
+        """
+        prompt = f"""
+You are a Medical Research Analyst specializing in clinical trial validation.
+
+Your ONLY task is to determine if these two pharmaceutical publications study the same disease or therapeutic indication.
+
+PUBLICATION 1:
+{text1[:15000]}
+
+PUBLICATION 2:  
+{text2[:15000]}
+
+Analyze and respond in the following JSON format:
+
+{{
+    "compatible": true/false,
+    "disease_analysis": {{
+        "publication1_disease": "detected disease from publication 1",
+        "publication2_disease": "detected disease from publication 2",
+        "compatibility_reason": "explanation of why compatible or not"
+    }}
+}}
+
+VALIDATION RULES:
+- Compatible = Same disease or closely related therapeutic indications
+- Incompatible = Different diseases (e.g. breast cancer vs melanoma)
+- When incompatible, use this message: "These publications are not comparable since they study different diseases: '[disease1]' vs '[disease2]'. Comparative analysis requires publications investigating the same disease or therapeutic indication."
+
+Focus ONLY on disease compatibility. Do not perform any comparative analysis.
+"""
+        return prompt
+
     def generate_comparison_prompt(self, text1: str, text2: str) -> str:
         """
-        Generate a comprehensive prompt for Gemini API to compare two pharmaceutical publications.
+        Generate a comprehensive prompt for full comparative analysis (after validation passes).
         
         Args:
             text1: Text content from first publication
@@ -71,8 +113,9 @@ class EfficacyLensAgent:
             Formatted prompt for Gemini API
         """
         prompt = f"""
-You are a Business Analyst in the Biopharmaceutical investment field analyzing two clinical trial publications. 
-Your task is to compare these studies and generate strategic investment insights for senior decision makers including Investment Managers, Head of R&D, Market Access Directors, and Chief Medical Officers (CMOs).
+You are a Business Analyst in the Biopharmaceutical investment field analyzing two clinical trial publications.
+
+These publications have already been validated as studying the same disease/indication. Perform a comprehensive comparative analysis.
 
 PUBLICATION 1:
 {text1[:15000]}  # Truncate to avoid token limits
@@ -80,7 +123,7 @@ PUBLICATION 1:
 PUBLICATION 2:  
 {text2[:15000]}  # Truncate to avoid token limits
 
-Please provide your analysis in the following JSON format:
+Analyze and respond in the following JSON format:
 
 {{
     "comparison_table": {{
@@ -157,16 +200,71 @@ Please provide your analysis in the following JSON format:
     }}
 }}
 
-Ensure all data is accurately extracted from the publications. If specific data is not available, use 'Not reported' or 'N/A'.
+INSTRUCTIONS:
+- Perform comprehensive comparative analysis between the two publications
+- Focus on investment and business implications for decision-makers
+- Ensure all data is accurately extracted from the publications
+- If specific data is not available, use 'Not reported' or 'N/A'
 """
         return prompt
     
-    def call_gemini_api(self, prompt: str) -> Dict:
+    def call_validation_api(self, prompt: str) -> Dict:
         """
-        Call Google Gemini API with the comparison prompt.
+        Call Google Gemini API for validation only.
         
         Args:
-            prompt: Formatted prompt for analysis
+            prompt: Formatted validation prompt
+            
+        Returns:
+            Parsed JSON response with validation results
+        """
+        try:
+            self.logger.info("Calling Gemini API for disease validation...")
+            
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
+            
+            # Extract JSON from response
+            response_text = response.text
+            
+            # Find JSON content
+            start_marker = "```json"
+            end_marker = "```"
+            
+            start_idx = response_text.find(start_marker)
+            if start_idx != -1:
+                start_idx += len(start_marker)
+                end_idx = response_text.find(end_marker, start_idx)
+                if end_idx != -1:
+                    json_text = response_text[start_idx:end_idx].strip()
+                else:
+                    json_text = response_text[start_idx:].strip()
+            else:
+                # Try to find JSON structure directly
+                json_text = response_text.strip()
+            
+            # Parse JSON
+            result = json.loads(json_text)
+            
+            self.logger.info("Successfully parsed validation response")
+            return result
+            
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Error parsing validation JSON response: {str(e)}")
+            self.logger.error(f"Response text: {response_text[:500]}...")
+            raise
+        except Exception as e:
+            self.logger.error(f"Error calling validation API: {str(e)}")
+            raise
+    
+    def call_gemini_api(self, prompt: str) -> Dict:
+        """
+        Call Google Gemini API for full comparative analysis (after validation).
+        
+        Args:
+            prompt: Formatted analysis prompt
             
         Returns:
             Parsed JSON response from Gemini
@@ -252,9 +350,155 @@ Ensure all data is accurately extracted from the publications. If specific data 
             self.logger.error(f"Error formatting comparison table: {str(e)}")
             raise
     
+    def detect_disease_indication(self, pdf_text: str) -> Dict[str, str]:
+        """
+        Detect the disease/indication from a publication using AI.
+        
+        Args:
+            pdf_text: Extracted text from PDF
+            
+        Returns:
+            Dictionary with disease, indication, and therapeutic_area
+        """
+        try:
+            prompt = f"""
+            Analyze this pharmaceutical publication text and identify the disease/indication being studied.
+            
+            Publication text (first 10000 characters):
+            {pdf_text[:10000]}
+            
+            Please respond in JSON format:
+            {{
+                "primary_disease": "main disease being studied (e.g., 'breast cancer', 'melanoma', 'NSCLC')",
+                "indication": "specific indication (e.g., 'metastatic breast cancer', 'advanced melanoma')",
+                "therapeutic_area": "broad category (e.g., 'oncology', 'neurology', 'cardiology')",
+                "confidence": "high/medium/low",
+                "patient_population": "brief description of patient population"
+            }}
+            """
+            
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=genai.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=500
+                )
+            )
+            
+            response_text = response.text
+            
+            # Extract JSON from response
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            json_text = response_text[json_start:json_end]
+            
+            result = json.loads(json_text)
+            self.logger.info(f"Detected disease: {result.get('primary_disease', 'Unknown')}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error detecting disease: {str(e)}")
+            return {
+                "primary_disease": "unknown",
+                "indication": "unknown", 
+                "therapeutic_area": "unknown",
+                "confidence": "low",
+                "patient_population": "unknown"
+            }
+    
+    def validate_publication_compatibility(self, pdf_path1: str, pdf_path2: str) -> Dict[str, any]:
+        """
+        Validate that two publications are comparable before analysis.
+        
+        Args:
+            pdf_path1: Path to first PDF
+            pdf_path2: Path to second PDF
+            
+        Returns:
+            Dictionary with validation results and disease information
+        """
+        try:
+            self.logger.info("Validating publication compatibility...")
+            
+            # Extract text from both PDFs
+            text1, text2 = self.extract_text_from_pdfs(pdf_path1, pdf_path2)
+            
+            # Detect diseases from both publications
+            disease1 = self.detect_disease_indication(text1)
+            disease2 = self.detect_disease_indication(text2)
+            
+            # Check compatibility
+            compatible = self._check_disease_compatibility(disease1, disease2)
+            
+            return {
+                "compatible": compatible,
+                "publication1_disease": disease1,
+                "publication2_disease": disease2,
+                "compatibility_reason": self._get_compatibility_reason(disease1, disease2, compatible)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error validating compatibility: {str(e)}")
+            return {
+                "compatible": False,
+                "error": str(e),
+                "compatibility_reason": "Error occurred during validation"
+            }
+    
+    def _check_disease_compatibility(self, disease1: Dict, disease2: Dict) -> bool:
+        """
+        Check if two diseases/indications are compatible for comparison.
+        
+        Args:
+            disease1: Disease info from first publication
+            disease2: Disease info from second publication
+            
+        Returns:
+            True if compatible, False otherwise
+        """
+        # Normalize disease names for comparison
+        disease1_normalized = disease1.get("primary_disease", "").lower().strip()
+        disease2_normalized = disease2.get("primary_disease", "").lower().strip()
+        
+        # Check exact match
+        if disease1_normalized == disease2_normalized:
+            return True
+        
+        # Check common synonyms and related conditions
+        compatibility_map = {
+            "breast cancer": ["breast carcinoma", "mammary carcinoma"],
+            "melanoma": ["malignant melanoma", "cutaneous melanoma"],
+            "nsclc": ["non-small cell lung cancer", "lung adenocarcinoma", "lung squamous cell carcinoma"],
+            "lung cancer": ["nsclc", "non-small cell lung cancer"],
+            "migraine": ["headache", "chronic migraine"],
+            "colorectal cancer": ["colon cancer", "rectal cancer", "crc"]
+        }
+        
+        # Check if diseases are related
+        for main_disease, synonyms in compatibility_map.items():
+            if (disease1_normalized == main_disease and disease2_normalized in synonyms) or \
+               (disease2_normalized == main_disease and disease1_normalized in synonyms) or \
+               (disease1_normalized in synonyms and disease2_normalized in synonyms):
+                return True
+        
+        return False
+    
+    def _get_compatibility_reason(self, disease1: Dict, disease2: Dict, compatible: bool) -> str:
+        """
+        Generate explanation for compatibility decision.
+        """
+        if compatible:
+            return f"Both publications study {disease1.get('primary_disease', 'unknown')} - comparison is valid and clinically meaningful"
+        else:
+            disease1_name = disease1.get('primary_disease', 'unknown disease')
+            disease2_name = disease2.get('primary_disease', 'unknown disease')
+            return f"These publications are not comparable since they study different diseases: '{disease1_name}' vs '{disease2_name}'. Comparative analysis requires publications investigating the same disease or therapeutic indication."
+
     def compare_publications(self, pdf_path1: str, pdf_path2: str) -> Dict[str, str]:
         """
         Main method to compare two pharmaceutical publications.
+        Uses mandatory two-step process: validation first, then analysis.
         
         Args:
             pdf_path1: Path to first PDF
@@ -264,31 +508,66 @@ Ensure all data is accurately extracted from the publications. If specific data 
             Dictionary containing formatted comparison table and analysis
         """
         try:
-            self.logger.info(f"Starting comparison of {pdf_path1} and {pdf_path2}")
+            self.logger.info(f"Starting two-step analysis of {pdf_path1} and {pdf_path2}")
             
-            # Extract text from PDFs
+            # STEP 1: Extract text from PDFs
             text1, text2 = self.extract_text_from_pdfs(pdf_path1, pdf_path2)
             
-            # Generate prompt
-            prompt = self.generate_comparison_prompt(text1, text2)
+            # STEP 2: Mandatory Validation
+            self.logger.info("Step 1: Validating disease compatibility...")
+            validation_prompt = self.generate_validation_prompt(text1, text2)
+            validation_result = self.call_validation_api(validation_prompt)
             
-            # Call Gemini API
-            result = self.call_gemini_api(prompt)
+            is_compatible = validation_result.get("compatible", False)
+            disease_analysis = validation_result.get("disease_analysis", {})
+            
+            if not is_compatible:
+                # Publications are not compatible
+                disease1 = disease_analysis.get("publication1_disease", "Unknown disease")
+                disease2 = disease_analysis.get("publication2_disease", "Unknown disease")
+                compatibility_reason = disease_analysis.get("compatibility_reason", "Publications study different diseases")
+                
+                raise ValueError(f"""
+Comparative Analysis Not Possible: {compatibility_reason}
+
+Publication 1: {disease1}
+Publication 2: {disease2}
+
+Why This Matters:
+Cross-disease comparisons are scientifically invalid and clinically meaningless. Each disease has unique pathophysiology, patient populations, treatment endpoints, and safety profiles that prevent meaningful comparison.
+
+To Proceed:
+- Select publications studying the same disease or therapeutic indication
+- Use our validated sample pairs for testing
+
+Validated Sample Pairs Available:
+- Breast Cancer Studies: BreastCancer1.pdf + BreastCancer2.pdf  
+- Melanoma Studies: Melanoma1.pdf + melanoma2.pdf
+- Lung Cancer Studies: NSCLC_1.pdf + NSCLC_2.pdf
+- Migraine Studies: Migraine1.pdf + Migraine2.pdf
+                """)
+            
+            self.logger.info(f"✅ Validation passed: {disease_analysis.get('compatibility_reason', 'Same disease detected')}")
+            
+            # STEP 3: Full Analysis (only proceeds if validation passed)
+            self.logger.info("Step 2: Performing comprehensive comparative analysis...")
+            analysis_prompt = self.generate_comparison_prompt(text1, text2)
+            analysis_result = self.call_gemini_api(analysis_prompt)
             
             # Format results
-            comparison_table = self.format_comparison_table(result["comparison_table"])
+            comparison_table = self.format_comparison_table(analysis_result["comparison_table"])
             
             # Extract analysis paragraphs
-            executive_summary = result["executive_summary"]
+            executive_summary = analysis_result["executive_summary"]
             
             final_result = {
                 "comparison_table": comparison_table,
-                            "investment_opportunity": executive_summary["investment_opportunity"],
-            "risk_assessment_and_strategy": executive_summary["risk_assessment_and_strategy"],
-                "raw_data": result
+                "investment_opportunity": executive_summary["investment_opportunity"],
+                "risk_assessment_and_strategy": executive_summary["risk_assessment_and_strategy"],
+                "raw_data": analysis_result
             }
             
-            self.logger.info("Comparison completed successfully")
+            self.logger.info("Two-step analysis completed successfully")
             return final_result
             
         except Exception as e:
